@@ -1,0 +1,382 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: saleor
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: saleor-db-pvc
+  namespace: saleor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 512Mi
+  storageClassName: standard
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: saleor-redis-pvc
+  namespace: saleor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 512Mi
+  storageClassName: standard
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saleor-api
+  namespace: saleor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saleor-api
+  template:
+    metadata:
+      labels:
+        app: saleor-api
+    spec:
+      containers:
+      - name: saleor-api
+        image: ghcr.io/saleor/saleor:3.20
+        ports:
+        - containerPort: 8000
+        securityContext:
+          runAsUser: 1000                  
+          runAsGroup: 1000                
+          allowPrivilegeEscalation: false  
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "500m"
+        env:
+        - name: ALLOWED_HOSTS
+          value: "localhost,api,192.168.49.2,34.42.64.63"
+        - name: JAEGER_AGENT_HOST
+          value: "jaeger"
+        - name: DASHBOARD_URL
+          value: "http://localhost:9000/"
+        - name: DATABASE_URL
+          value: "postgres://saleor:saleor@postgres:5432/saleor"
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saleor-dashboard
+  namespace: saleor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saleor-dashboard
+  template:
+    metadata:
+      labels:
+        app: saleor-dashboard
+    spec:
+      containers:
+      - name: saleor-dashboard
+        image: ghcr.io/saleor/saleor-dashboard:latest 
+        ports:
+        - containerPort: 80 
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: saleor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+
+        ports:
+        - containerPort: 5432               
+        env:
+        - name: POSTGRES_USER
+          value: saleor
+        - name: POSTGRES_PASSWORD
+          value: saleor
+        - name: POSTGRES_DB
+          value: saleor
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: saleor-db-pvc
+
+---
+
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: saleor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      securityContext:  
+        fsGroup: 1000
+      containers:
+      - name: redis
+        image: redis:7.0-alpine
+        ports:
+        - containerPort: 6379
+        securityContext:
+          runAsUser: 1000                  
+          runAsGroup: 1000                 
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: redis-storage
+        persistentVolumeClaim:
+          claimName: saleor-redis-pvc
+
+---
+
+
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: jaeger
+#   namespace: saleor
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: jaeger
+#   template:
+#     metadata:
+#       labels:
+#         app: jaeger
+#     spec:
+#       containers:
+#         - name: jaeger
+#           image: jaegertracing/all-in-one:1.60
+#           ports:
+#             - containerPort: 16686
+#             - containerPort: 6831
+#             - containerPort: 6832
+#             - containerPort: 14268
+#           env:
+#             - name: COLLECTOR_ZIPKIN_HTTP_PORT
+#               value: "9411"
+#           resources:
+#             requests:
+#               memory: "64Mi"
+#               cpu: "50m"
+#             limits:
+#               memory: "128Mi"
+#               cpu: "100m"
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: saleor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mailpit
+  template:
+    metadata:
+      labels:
+        app: mailpit
+    spec:
+      containers:
+      - name: mailpit
+        image: axllent/mailpit:latest
+        ports:
+        - containerPort: 1025  
+        - containerPort: 8025 
+        securityContext:
+          runAsUser: 1000                  
+          runAsGroup: 1000                
+          allowPrivilegeEscalation: false  
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: saleor-api
+  namespace: saleor
+spec:
+  selector:
+    app: saleor-api
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+  type: LoadBalancer
+
+---
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: saleor-dashboard
+  namespace: saleor
+spec:
+  selector:
+    app: saleor-dashboard
+  ports:
+  - protocol: TCP
+    port: 9002
+    targetPort: 80
+  type: LoadBalancer
+
+---
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: saleor
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
+
+---
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: saleor
+spec:
+  selector:
+    app: redis
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
+  type: ClusterIP
+
+---
+
+
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: jaeger
+#   namespace: saleor
+# spec:
+#   selector:
+#     app: jaeger
+#   ports:
+#     - name: jaeger-ui
+#       port: 16686
+#       targetPort: 16686
+#       protocol: TCP
+#     - name: jaeger-udp-thrift-compact
+#       port: 6831
+#       targetPort: 6831
+#       protocol: UDP
+#     - name: jaeger-udp-thrift-binary
+#       port: 6832
+#       targetPort: 6832
+#       protocol: UDP
+#     - name: jaeger-http-collector
+#       port: 14268
+#       targetPort: 14268
+#       protocol: TCP
+#   type: LoadBalancer
+
+---
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: saleor
+spec:
+  selector:
+    app: mailpit
+  ports:
+  - protocol: TCP
+    port: 8025
+    targetPort: 8025
+  type: LoadBalancer
